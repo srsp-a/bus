@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ผังที่นั่งรถทัวร์ (Real-time & Multi-Select)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Font */
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;700&display=swap');
+        
+        :root {
+            --color-primary: 79 70 229; /* indigo-600 */
+            --color-background: 243 244 246; /* gray-100 */
+            --color-surface: 255 255 255;
+            --color-text-primary: 31 41 55; /* gray-800 */
+            --color-seat-available: 22 163 74; /* green-600 */
+            --color-seat-occupied: 220 38 38;  /* red-600 */
+            --color-seat-edit-mode: 59 130 246; /* blue-500 */
+            --color-selection: 245 158 11; /* amber-500 */
+        }
+
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: rgb(var(--color-background));
+            color: rgb(var(--color-text-primary));
+        }
+
+        .draggable-item {
+            transition: border 0.2s ease, box-shadow 0.2s ease;
+            position: absolute;
+            user-select: none;
+            border-radius: 0.5rem;
+            border-width: 2px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .seat {
+            width: 90px;
+            height: 60px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 0.8rem;
+            overflow: hidden;
+        }
+
+        .dragging {
+            z-index: 1000;
+            opacity: 0.6;
+            transform: scale(0.95);
+        }
+        
+        .bus-container {
+            position: relative;
+            width: 100%;
+            height: 800px;
+            background-color: #eef2ff; /* indigo-50 */
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .bus-container.edit-mode-active {
+            border: 2px dashed rgb(var(--color-seat-edit-mode));
+            background-color: #eff6ff; /* blue-50 */
+        }
+
+        .seat-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(circle at 1px 1px, rgba(var(--color-primary), 0.1) 1px, transparent 0);
+            background-size: 20px 20px;
+            pointer-events: none;
+        }
+
+        .seat-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 90%;
+            pointer-events: none;
+        }
+
+        .text-box {
+            padding: 8px;
+            border: 2px solid #a78bfa; /* purple-400 */
+            font-size: 0.8rem;
+            word-wrap: break-word;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            resize: none; /* Disable native resize */
+            overflow: hidden;
+        }
+        
+        .selected {
+            border-color: rgb(var(--color-selection)) !important;
+            box-shadow: 0 0 10px rgba(var(--color-selection), 0.7);
+        }
+
+        #marqueeBox {
+            position: absolute;
+            border: 1px dashed rgb(var(--color-text-primary));
+            background-color: rgba(var(--color-primary), 0.1);
+            z-index: 9999;
+            pointer-events: none;
+        }
+
+        .resize-handle {
+            position: absolute;
+            bottom: -1px;
+            right: -1px;
+            width: 12px;
+            height: 12px;
+            background-color: rgb(var(--color-selection));
+            border: 2px solid white;
+            border-radius: 2px;
+            cursor: nwse-resize;
+            z-index: 10;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            font-size: 0.875rem;
+            border: 1px solid #e5e7eb;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary { background-color: rgb(var(--color-primary)); color: white; border-color: transparent; }
+        .btn-primary:hover:not(:disabled) { background-color: rgb(var(--color-primary) / 0.9); }
+        .btn-secondary { background-color: rgb(var(--color-surface)); color: rgb(var(--color-text-primary));}
+        .btn-secondary:hover:not(:disabled) { background-color: rgb(var(--color-background)); }
+        .btn-icon { padding: 0.5rem; }
+
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl mx-auto">
+        <div class="bg-white p-6 rounded-xl shadow-lg mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h1 id="busTitle" class="text-3xl font-bold text-gray-800">ผังที่นั่งรถทัวร์ (BUS 1)</h1>
+                    <p class="text-gray-500 mt-1">4 แถวแนวตั้ง 36 ที่นั่ง (แก้ไขและสลับตำแหน่งได้)</p>
+                </div>
+                <div id="busTabsContainer" class="flex flex-wrap items-center gap-2"></div>
+            </div>
+
+            <div class="mt-6 pt-4 border-t border-gray-200 flex flex-wrap items-center gap-3">
+                 <div class="flex items-center gap-2 rounded-lg bg-gray-100 p-1">
+                    <button id="editModeBtn" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg>
+                        <span>โหมดจัดเรียง</span>
+                    </button>
+                    <button id="undoBtn" class="btn btn-secondary btn-icon" title="ย้อนกลับ">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <button id="resetLayoutBtn" class="btn btn-secondary btn-icon" title="รีเซ็ตตำแหน่ง">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7V9a1 1 0 01-2 0V3a1 1 0 011-1zm12 14a1 1 0 01-1-1v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 111.885-.666A5.002 5.002 0 0014.001 13v-2a1 1 0 012 0v5a1 1 0 01-1 1z" clip-rule="evenodd" /></svg>
+                    </button>
+                </div>
+                <div class="flex items-center gap-2 rounded-lg bg-gray-100 p-1">
+                    <button id="addSeatBtn" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M2 6a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM4 12a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2z" /></svg>
+                        <span>เพิ่มที่นั่ง</span>
+                    </button>
+                     <button id="addTextBoxBtn" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clip-rule="evenodd" /><path d="M10 9a1 1 0 100-2 1 1 0 000 2z" /></svg>
+                        <span>เพิ่มกล่องข้อความ</span>
+                    </button>
+                    <button id="addBusBtn" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" /></svg>
+                        <span>เพิ่มรถบัส</span>
+                    </button>
+                </div>
+                 <div class="flex items-center gap-2 rounded-lg bg-gray-100 p-1 ml-auto">
+                    <button id="saveBtn" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7.5 2.5a.5.5 0 00-1 0V3H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2h-.5V2.5a.5.5 0 00-1 0V3h-3V2.5z" /><path d="M8 8.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3a.5.5 0 01-.5-.5z" /></svg>
+                        <span>บันทึก</span>
+                    </button>
+                    <button id="shareBtn" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M15 8a3 3 0 10-2.977-2.63l-4.94 2.47a3 3 0 100 4.319l4.94 2.47a3 3 0 10.895-1.789l-4.94-2.47a3.027 3.027 0 000-.74l4.94-2.47C13.456 7.68 14.19 8 15 8z" /></svg>
+                        <span>แชร์</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="editModeIndicator" class="mt-4 text-sm text-blue-600 font-medium hidden rounded-lg bg-blue-100 p-3 text-center">
+                🔧 **โหมดจัดเรียง:** ลากเพื่อย้าย, Ctrl+คลิก เพื่อเลือกหลายอัน, หรือลากบนพื้นที่ว่างเพื่อเลือกเป็นกลุ่ม
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-gray-400">
+                <div id="connectionStatus"><span class="text-yellow-500">🔄 กำลังเชื่อมต่อ...</span></div>
+                <div id="autoSaveStatus"><span class="text-gray-500">💾 สถานะ: ยังไม่ได้บันทึก</span></div>
+            </div>
+        </div>
+
+        <div class="bg-white p-4 sm:p-6 rounded-xl shadow-md border-4 border-gray-200">
+            <div id="busContainer" class="bus-container">
+                <div class="seat-grid"></div>
+                <div id="busLayout"></div>
+                <div id="marqueeBox" class="hidden"></div>
+            </div>
+        </div>
+        
+        <div class="mt-4 text-center text-sm text-gray-500">
+            <p><strong>วิธีใช้:</strong> คลิกที่นั่งเพื่อแก้ไขชื่อ | เข้า 'โหมดจัดเรียง' เพื่อลากย้ายตำแหน่ง</p>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="editModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl font-bold">แก้ไขข้อมูลที่นั่ง <span id="seatIdText" class="text-indigo-600"></span></h2>
+                <button id="closeButton" class="text-gray-400 hover:text-gray-700 text-3xl">&times;</button>
+            </div>
+            <div class="mt-4 space-y-4">
+                <div>
+                    <label for="passengerName" class="block text-sm font-medium text-gray-700">ชื่อผู้โดยสาร:</label>
+                    <input type="text" id="passengerName" placeholder="ใส่ชื่อ..." class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                </div>
+                <div>
+                    <label for="otherInfo" class="block text-sm font-medium text-gray-700">ข้อมูลเพิ่มเติม:</label>
+                    <textarea id="otherInfo" placeholder="เช่น จุดรับ-ส่ง, เบอร์โทร..." rows="2" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm resize-none"></textarea>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-between items-center">
+                <button id="deleteSeatButton" class="btn btn-secondary text-red-500 hover:bg-red-50">ลบที่นั่ง</button>
+                <div class="flex gap-2">
+                    <button id="clearButton" class="btn btn-secondary">ล้างข้อมูล</button>
+                    <button id="saveSeatButton" class="btn btn-primary">บันทึก</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="textBoxModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl font-bold">เพิ่มกล่องข้อความ</h2>
+                <button id="closeTextBoxButton" class="text-gray-400 hover:text-gray-700 text-3xl">&times;</button>
+            </div>
+            <div class="mt-4 space-y-4">
+                <div>
+                    <label for="textBoxContent" class="block text-sm font-medium text-gray-700">ข้อความ:</label>
+                    <textarea id="textBoxContent" placeholder="ใส่ข้อความที่ต้องการ..." rows="3" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm resize-none"></textarea>
+                </div>
+                <div>
+                    <label for="textBoxColor" class="block text-sm font-medium text-gray-700">สีพื้นหลัง:</label>
+                    <select id="textBoxColor" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm">
+                        <option value="yellow">เหลือง</option> <option value="pink">ชมพู</option> <option value="green">เขียว</option> <option value="blue">น้ำเงิน</option> <option value="orange">ส้ม</option> <option value="purple">ม่วง</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-3">
+                <button id="cancelTextBoxButton" class="btn btn-secondary">ยกเลิก</button>
+                <button id="createTextBoxButton" class="btn text-white bg-purple-600 hover:bg-purple-700">สร้าง</button>
+            </div>
+        </div>
+    </div>
+    <div id="busModal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl font-bold">เพิ่มรถบัสใหม่</h2>
+                <button id="closeBusButton" class="text-gray-400 hover:text-gray-700 text-3xl">&times;</button>
+            </div>
+            <div class="mt-4 space-y-4">
+                <div>
+                    <label for="busName" class="block text-sm font-medium text-gray-700">ชื่อรถบัส:</label>
+                    <input type="text" id="busName" placeholder="เช่น BUS 2, VIP A..." class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm">
+                </div>
+                <div>
+                    <label for="busColor" class="block text-sm font-medium text-gray-700">สีรถบัส (สำหรับแท็บ):</label>
+                    <select id="busColor" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm">
+                        <option value="indigo">น้ำเงิน</option> <option value="green">เขียว</option> <option value="red">แดง</option> <option value="purple">ม่วง</option> <option value="yellow">เหลือง</option> <option value="pink">ชมพู</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end space-x-3">
+                <button id="cancelBusButton" class="btn btn-secondary">ยกเลิก</button>
+                <button id="createBusButton" class="btn text-white bg-teal-600 hover:bg-teal-700">สร้าง</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let appId = new URLSearchParams(window.location.search).get('id');
+        if (!appId) {
+            appId = 'bus-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        let allBusData = {};
+        let buses = {};
+        let currentBusId = 'bus1';
+        let busCounter;
+        
+        let isEditMode = false;
+        
+        let history = [];
+        let historyIndex = -1;
+
+        const STORAGE_KEY = 'bus-seating-chart-app';
+
+        function getInitialStateForBus() {
+            const seats = {};
+            const columnPositions = [150, 250, 450, 550];
+            const seatsPerRow = 4;
+            for (let i = 1; i <= 36; i++) {
+                const rowIndex = Math.floor((i - 1) / seatsPerRow);
+                const colIndex = (i - 1) % seatsPerRow;
+                seats[i] = { id: i, passenger: '', otherInfo: '', x: columnPositions[colIndex], y: 80 + rowIndex * 70 };
+            }
+
+            return {
+                seats: seats,
+                textBoxes: {},
+                seatCounter: 36,
+                textBoxCounter: 0,
+            };
+        }
+
+        function initializeApp() {
+            document.getElementById('connectionStatus').innerHTML = '<span class="text-green-500">🟢 โหลดเรียบร้อย</span>';
+            loadFromStorage();
+            setupEventListeners();
+            renderAll();
+            pushStateToHistory();
+        }
+        
+        function setupEventListeners() {
+            document.getElementById('editModeBtn').addEventListener('click', toggleEditMode);
+            document.getElementById('undoBtn').addEventListener('click', undo);
+            document.getElementById('resetLayoutBtn').addEventListener('click', resetLayout);
+            document.getElementById('addSeatBtn').addEventListener('click', addNewSeat);
+            document.getElementById('addTextBoxBtn').addEventListener('click', openTextBoxModal);
+            document.getElementById('addBusBtn').addEventListener('click', openBusModal);
+            document.getElementById('saveBtn').addEventListener('click', saveToStorage);
+            document.getElementById('shareBtn').addEventListener('click', shareLink);
+            
+            document.getElementById('busContainer').addEventListener('mousedown', handleContainerMouseDown);
+
+            // Modals
+            document.getElementById('closeButton').addEventListener('click', closeEditModal);
+            document.getElementById('saveSeatButton').addEventListener('click', saveSeatData);
+            document.getElementById('clearButton').addEventListener('click', clearSeatData);
+            document.getElementById('deleteSeatButton').addEventListener('click', deleteSeatFromModal);
+            document.getElementById('closeTextBoxButton').addEventListener('click', closeTextBoxModal);
+            document.getElementById('cancelTextBoxButton').addEventListener('click', closeTextBoxModal);
+            document.getElementById('createTextBoxButton').addEventListener('click', createTextBox);
+            document.getElementById('closeBusButton').addEventListener('click', closeBusModal);
+            document.getElementById('cancelBusButton').addEventListener('click', closeBusModal);
+            document.getElementById('createBusButton').addEventListener('click', createBus);
+            document.getElementById('editModal').addEventListener('click', (e) => { if (e.target.id === 'editModal') closeEditModal(); });
+            document.getElementById('textBoxModal').addEventListener('click', (e) => { if (e.target.id === 'textBoxModal') closeTextBoxModal(); });
+            document.getElementById('busModal').addEventListener('click', (e) => { if (e.target.id === 'busModal') closeBusModal(); });
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllModals(); });
+        }
+
+        function getCurrentBusData() {
+            return allBusData[currentBusId];
+        }
+
+        function pushStateToHistory() {
+            const state = {
+                allBusData: JSON.parse(JSON.stringify(allBusData)),
+                buses: JSON.parse(JSON.stringify(buses)),
+                currentBusId: currentBusId,
+            };
+            
+            history = history.slice(0, historyIndex + 1);
+            history.push(state);
+            historyIndex = history.length - 1;
+            updateUndoButton();
+            updateSaveStatus(false);
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                loadStateFromHistory(history[historyIndex]);
+                updateUndoButton();
+            }
+        }
+        
+        function loadStateFromHistory(state) {
+            allBusData = state.allBusData;
+            buses = state.buses;
+            currentBusId = state.currentBusId;
+            renderAll();
+        }
+        
+        function updateUndoButton() {
+            document.getElementById('undoBtn').disabled = historyIndex <= 0;
+        }
+
+        function updateSaveStatus(isSaved) {
+            const statusEl = document.getElementById('autoSaveStatus');
+            if (isSaved) {
+                const timeString = new Date().toLocaleTimeString('th-TH');
+                statusEl.innerHTML = `<span class="text-green-500">💾 บันทึกแล้ว: ${timeString}</span>`;
+            } else {
+                statusEl.innerHTML = '<span class="text-yellow-500">💾 มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>';
+            }
+        }
+
+        function saveToStorage() {
+            try {
+                const dataToSave = {
+                    allBusData: allBusData,
+                    buses: buses,
+                    appId: appId,
+                    version: '2.1'
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+                showMessage('บันทึกข้อมูลเรียบร้อยแล้ว', 'success');
+                updateSaveStatus(true);
+            } catch (error) {
+                console.error("Error saving to storage:", error);
+                showMessage('เกิดข้อผิดพลาดในการบันทึก', 'error');
+            }
+        }
+
+        function loadFromStorage() {
+            const savedData = localStorage.getItem(STORAGE_KEY);
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                allBusData = parsed.allBusData;
+                buses = parsed.buses;
+            } else {
+                buses = { 'bus1': { id: 'bus1', name: 'BUS 1', color: 'indigo' } };
+                allBusData = { 'bus1': getInitialStateForBus() };
+            }
+        }
+
+        function renderAll() {
+            renderBusTabs();
+            renderBusLayout();
+            updateBusTitle();
+        }
+
+        function renderBusLayout() {
+            const busLayout = document.getElementById('busLayout');
+            busLayout.innerHTML = '';
+            const data = getCurrentBusData();
+            if (!data) return;
+
+            Object.values(data.seats).forEach(seat => busLayout.appendChild(createSeatElement(seat)));
+            Object.values(data.textBoxes).forEach(textBox => busLayout.appendChild(createTextBoxElement(textBox)));
+            
+            updateSelectionVisuals();
+        }
+        
+        function createSeatElement(seat) {
+            const seatDiv = document.createElement('div');
+            seatDiv.className = 'draggable-item seat';
+            const isOccupied = seat.passenger && seat.passenger.trim() !== '';
+            let seatClass = isEditMode 
+                ? 'cursor-grab bg-blue-100 border-blue-400 text-blue-800'
+                : `cursor-pointer text-white ${isOccupied ? 'bg-red-500 border-red-600' : 'bg-green-500 border-green-600 hover:bg-green-600'}`;
+            seatDiv.classList.add(...seatClass.split(' '));
+            seatDiv.dataset.id = seat.id;
+            seatDiv.dataset.type = 'seat';
+            seatDiv.style.left = `${seat.x}px`;
+            seatDiv.style.top = `${seat.y}px`;
+            const displayInfo = seat.otherInfo ? `${seat.passenger || 'ว่าง'} (${seat.otherInfo.substring(0, 10)}...)` : (seat.passenger || 'ว่าง');
+            seatDiv.innerHTML = `<div class="font-bold text-lg">${seat.id}</div><div class="seat-name text-xs px-1" title="${seat.passenger || 'ว่าง'}${seat.otherInfo ? ' - ' + seat.otherInfo : ''}">${displayInfo}</div>`;
+            if (!isEditMode) seatDiv.addEventListener('click', () => openEditModal(seat.id));
+            return seatDiv;
+        }
+
+        function createTextBoxElement(textBox) {
+            const textBoxDiv = document.createElement('div');
+            textBoxDiv.className = 'draggable-item text-box';
+            textBoxDiv.dataset.id = textBox.id;
+            textBoxDiv.dataset.type = 'textBox';
+            textBoxDiv.style.left = `${textBox.x}px`;
+            textBoxDiv.style.top = `${textBox.y}px`;
+            textBoxDiv.style.width = `${textBox.width || 100}px`;
+            textBoxDiv.style.height = `${textBox.height || 40}px`;
+            const colorMap = { yellow: '#fef9c3', green: '#dcfce7', blue: '#dbeafe', pink: '#fce7f3', orange: '#ffedd5', purple: '#f3e8ff' };
+            textBoxDiv.style.backgroundColor = colorMap[textBox.color] || colorMap.yellow;
+            textBoxDiv.textContent = textBox.content;
+            if (isEditMode) {
+                const resizeHandle = document.createElement('div');
+                resizeHandle.className = 'resize-handle';
+                resizeHandle.addEventListener('mousedown', handleResizeMouseDown);
+                textBoxDiv.appendChild(resizeHandle);
+                textBoxDiv.addEventListener('dblclick', () => editText(textBox.id, 'textBox'));
+            } else {
+                textBoxDiv.addEventListener('contextmenu', (e) => { e.preventDefault(); deleteTextBox(textBox.id); });
+            }
+            return textBoxDiv;
+        }
+
+        let currentEditingSeat = null;
+
+        function toggleEditMode() {
+            isEditMode = !isEditMode;
+            clearSelection();
+            document.getElementById('editModeBtn').classList.toggle('bg-blue-500', isEditMode);
+            document.getElementById('editModeBtn').classList.toggle('text-white', isEditMode);
+            document.getElementById('editModeIndicator').classList.toggle('hidden', !isEditMode);
+            document.getElementById('busContainer').classList.toggle('edit-mode-active', isEditMode);
+            renderBusLayout();
+        }
+
+        function addNewSeat() {
+            const data = getCurrentBusData();
+            data.seatCounter++;
+            data.seats[data.seatCounter] = {
+                id: data.seatCounter, passenger: '', otherInfo: '',
+                x: 300, y: 200
+            };
+            pushStateToHistory();
+            renderBusLayout();
+            showMessage(`เพิ่มที่นั่งหมายเลข ${data.seatCounter} แล้ว`, 'success');
+        }
+
+        function resetLayout() {
+            if (confirm('คุณต้องการรีเซ็ตตำแหน่งที่นั่งทั้งหมดหรือไม่? ข้อมูลผู้โดยสารจะยังคงอยู่')) {
+                const data = getCurrentBusData();
+                const currentSeatsInfo = JSON.parse(JSON.stringify(data.seats));
+                const newLayout = getInitialStateForBus();
+                data.seats = newLayout.seats;
+                Object.keys(data.seats).forEach(id => {
+                    if (currentSeatsInfo[id]) {
+                        data.seats[id].passenger = currentSeatsInfo[id].passenger;
+                        data.seats[id].otherInfo = currentSeatsInfo[id].otherInfo;
+                    }
+                });
+                data.textBoxes = {};
+                pushStateToHistory();
+                renderAll();
+            }
+        }
+
+        function shareLink() {
+            const url = new URL(window.location.origin + window.location.pathname);
+            url.searchParams.set('id', appId);
+            navigator.clipboard.writeText(url.href).then(() => {
+                showMessage('คัดลอกลิงก์แชร์แล้ว!', 'success');
+            });
+        }
+        
+        let selectedItems = new Set();
+        let actionState = { type: null, target: null, startX: 0, startY: 0, positions: new Map(), dimensions: {} };
+
+        function handleContainerMouseDown(e) {
+            if (!isEditMode) return;
+            const target = e.target;
+            const targetItem = target.closest('.draggable-item');
+            
+            if (target.classList.contains('resize-handle')) {
+                handleResizeMouseDown(e);
+                return;
+            }
+
+            if (targetItem) {
+                const id = targetItem.dataset.id;
+                actionState.type = 'drag';
+                
+                if (e.ctrlKey || e.metaKey) {
+                    selectedItems.has(id) ? selectedItems.delete(id) : selectedItems.add(id);
+                } else if (!selectedItems.has(id)) {
+                    clearSelection();
+                    selectedItems.add(id);
+                }
+                updateSelectionVisuals();
+                
+                actionState.positions.clear();
+                selectedItems.forEach(selId => {
+                    const el = document.querySelector(`[data-id="${selId}"]`);
+                    if (el) actionState.positions.set(selId, { x: el.offsetLeft, y: el.offsetTop });
+                });
+
+            } else {
+                actionState.type = 'marquee';
+                clearSelection();
+                updateSelectionVisuals();
+                const marqueeBox = document.getElementById('marqueeBox');
+                const containerRect = e.currentTarget.getBoundingClientRect();
+                actionState.startX = e.clientX - containerRect.left;
+                actionState.startY = e.clientY - containerRect.top;
+                marqueeBox.style.left = `${actionState.startX}px`;
+                marqueeBox.style.top = `${actionState.startY}px`;
+                marqueeBox.style.width = '0px';
+                marqueeBox.style.height = '0px';
+                marqueeBox.classList.remove('hidden');
+            }
+            
+            actionState.startX = e.clientX;
+            actionState.startY = e.clientY;
+            document.addEventListener('mousemove', handleGlobalMouseMove);
+            document.addEventListener('mouseup', handleGlobalMouseUp);
+        }
+
+        function handleResizeMouseDown(e) {
+            e.stopPropagation();
+            actionState.type = 'resize';
+            actionState.target = e.target.parentElement;
+            const id = actionState.target.dataset.id;
+            const data = getCurrentBusData().textBoxes[id];
+            actionState.dimensions = { width: data.width || 100, height: data.height || 40 };
+            actionState.startX = e.clientX;
+            actionState.startY = e.clientY;
+            document.addEventListener('mousemove', handleGlobalMouseMove);
+            document.addEventListener('mouseup', handleGlobalMouseUp);
+        }
+
+        function handleGlobalMouseMove(e) {
+            const dx = e.clientX - actionState.startX;
+            const dy = e.clientY - actionState.startY;
+
+            if (actionState.type === 'drag') {
+                actionState.positions.forEach((startPos, id) => {
+                    const el = document.querySelector(`[data-id="${id}"]`);
+                    if (el) {
+                        el.style.left = `${startPos.x + dx}px`;
+                        el.style.top = `${startPos.y + dy}px`;
+                    }
+                });
+            } else if (actionState.type === 'marquee') {
+                const marqueeBox = document.getElementById('marqueeBox');
+                const containerRect = document.getElementById('busContainer').getBoundingClientRect();
+                const currentX = e.clientX - containerRect.left;
+                const currentY = e.clientY - containerRect.top;
+                const startX = actionState.startX - containerRect.left;
+                const startY = actionState.startY - containerRect.top;
+                marqueeBox.style.left = `${Math.min(currentX, startX)}px`;
+                marqueeBox.style.top = `${Math.min(currentY, startY)}px`;
+                marqueeBox.style.width = `${Math.abs(currentX - startX)}px`;
+                marqueeBox.style.height = `${Math.abs(currentY - startY)}px`;
+            } else if (actionState.type === 'resize') {
+                const newWidth = Math.max(50, actionState.dimensions.width + dx);
+                const newHeight = Math.max(30, actionState.dimensions.height + dy);
+                actionState.target.style.width = `${newWidth}px`;
+                actionState.target.style.height = `${newHeight}px`;
+            }
+        }
+
+        function handleGlobalMouseUp(e) {
+            let stateChanged = false;
+            if (actionState.type === 'drag') {
+                selectedItems.forEach(id => {
+                    const el = document.querySelector(`[data-id="${id}"]`);
+                    if (el) {
+                        const type = el.dataset.type;
+                        const data = getCurrentBusData();
+                        const item = data[type + 's'][id];
+                        if (item) {
+                            item.x = el.offsetLeft;
+                            item.y = el.offsetTop;
+                            stateChanged = true;
+                        }
+                    }
+                });
+            } else if (actionState.type === 'marquee') {
+                const marqueeBox = document.getElementById('marqueeBox');
+                const marqueeRect = marqueeBox.getBoundingClientRect();
+                document.querySelectorAll('.draggable-item').forEach(el => {
+                    if (marqueeRect.width > 0 || marqueeRect.height > 0) {
+                        const elRect = el.getBoundingClientRect();
+                        if (marqueeRect.left < elRect.right && marqueeRect.right > elRect.left && marqueeRect.top < elRect.bottom && marqueeRect.bottom > elRect.top) {
+                            selectedItems.add(el.dataset.id);
+                        }
+                    }
+                });
+                marqueeBox.classList.add('hidden');
+                updateSelectionVisuals();
+            } else if (actionState.type === 'resize') {
+                const id = actionState.target.dataset.id;
+                const data = getCurrentBusData().textBoxes[id];
+                data.width = actionState.target.offsetWidth;
+                data.height = actionState.target.offsetHeight;
+                stateChanged = true;
+            }
+            
+            if (stateChanged) pushStateToHistory();
+            actionState.type = null;
+            document.removeEventListener('mousemove', handleGlobalMouseMove);
+            document.removeEventListener('mouseup', handleGlobalMouseUp);
+        }
+
+        function clearSelection() {
+            selectedItems.clear();
+        }
+
+        function updateSelectionVisuals() {
+            document.querySelectorAll('.draggable-item').forEach(el => {
+                el.classList.toggle('selected', selectedItems.has(el.dataset.id));
+            });
+        }
+
+        function openModal(modalId) { document.getElementById(modalId).classList.remove('hidden'); }
+        function closeModal(modalId) { document.getElementById(modalId).classList.add('hidden'); }
+        function closeAllModals() { closeModal('editModal'); closeModal('textBoxModal'); closeModal('busModal'); }
+
+        function openEditModal(seatId) {
+            currentEditingSeat = seatId;
+            const seat = getCurrentBusData().seats[seatId];
+            document.getElementById('seatIdText').textContent = seatId;
+            document.getElementById('passengerName').value = seat.passenger || '';
+            document.getElementById('otherInfo').value = seat.otherInfo || '';
+            openModal('editModal');
+            setTimeout(() => document.getElementById('passengerName').focus(), 100);
+        }
+        function closeEditModal() { closeModal('editModal'); currentEditingSeat = null; }
+        function saveSeatData() {
+            if (!currentEditingSeat) return;
+            const data = getCurrentBusData();
+            data.seats[currentEditingSeat].passenger = document.getElementById('passengerName').value.trim();
+            data.seats[currentEditingSeat].otherInfo = document.getElementById('otherInfo').value.trim();
+            pushStateToHistory();
+            renderBusLayout();
+            closeEditModal();
+        }
+        function clearSeatData() {
+            if (!currentEditingSeat) return;
+            const data = getCurrentBusData();
+            data.seats[currentEditingSeat].passenger = '';
+            data.seats[currentEditingSeat].otherInfo = '';
+            pushStateToHistory();
+            renderBusLayout();
+            closeEditModal();
+        }
+        function deleteSeatFromModal() {
+            if (!currentEditingSeat) return;
+            const data = getCurrentBusData();
+            if (Object.keys(data.seats).length <= 1) {
+                showMessage('ต้องมีที่นั่งอย่างน้อย 1 ที่', 'error');
+                return;
+            }
+            if (confirm(`ต้องการลบที่นั่งหมายเลข ${currentEditingSeat} หรือไม่?`)) {
+                delete data.seats[currentEditingSeat];
+                pushStateToHistory();
+                renderBusLayout();
+                showMessage(`ลบที่นั่งหมายเลข ${currentEditingSeat} แล้ว`, 'success');
+                closeEditModal();
+            }
+        }
+
+        function openTextBoxModal() {
+            document.getElementById('textBoxContent').value = '';
+            openModal('textBoxModal');
+            setTimeout(() => document.getElementById('textBoxContent').focus(), 100);
+        }
+        function closeTextBoxModal() { closeModal('textBoxModal'); }
+        function createTextBox() {
+            const content = document.getElementById('textBoxContent').value.trim();
+            if (!content) { alert('กรุณาใส่ข้อความ'); return; }
+            const data = getCurrentBusData();
+            data.textBoxCounter++;
+            const id = 'tb' + data.textBoxCounter;
+            data.textBoxes[id] = { id, content, color: document.getElementById('textBoxColor').value, x: 200, y: 150, width: 100, height: 40 };
+            pushStateToHistory();
+            renderBusLayout();
+            closeTextBoxModal();
+        }
+        function deleteTextBox(textBoxId) {
+            if (confirm('ลบกล่องข้อความนี้หรือไม่?')) {
+                delete getCurrentBusData().textBoxes[textBoxId];
+                pushStateToHistory();
+                renderBusLayout();
+            }
+        }
+        function editText(id, type) {
+            const data = getCurrentBusData();
+            const item = data.textBoxes[id];
+            const newText = prompt('แก้ไขข้อความ:', item.content);
+            if (newText !== null) {
+                item.content = newText;
+                pushStateToHistory();
+                renderBusLayout();
+            }
+        }
+
+        function openBusModal() {
+            document.getElementById('busName').value = '';
+            openModal('busModal');
+            setTimeout(() => document.getElementById('busName').focus(), 100);
+        }
+        function closeBusModal() { closeModal('busModal'); }
+        function createBus() {
+            const name = document.getElementById('busName').value.trim();
+            if (!name) { alert('กรุณาใส่ชื่อรถบัส'); return; }
+            if (Object.values(buses).some(bus => bus.name === name)) { alert('ชื่อรถบัสนี้มีอยู่แล้ว'); return; }
+            const color = document.getElementById('busColor').value;
+            busCounter = (busCounter || Object.keys(buses).length) + 1;
+            const newBusId = 'bus' + busCounter;
+            buses[newBusId] = { id: newBusId, name, color };
+            allBusData[newBusId] = getInitialStateForBus();
+            switchToBus(newBusId);
+            closeBusModal();
+        }
+
+        function updateBusTitle() {
+            const currentBus = buses[currentBusId];
+            if (currentBus) {
+                document.getElementById('busTitle').textContent = `ผังที่นั่งรถทัวร์ (${currentBus.name})`;
+            }
+        }
+        function renderBusTabs() {
+            const container = document.getElementById('busTabsContainer');
+            container.innerHTML = '';
+            const colorClasses = {
+                indigo: { active: 'bg-indigo-600 text-white', inactive: 'bg-indigo-100 text-indigo-800' },
+                green: { active: 'bg-green-600 text-white', inactive: 'bg-green-100 text-green-800' },
+                red: { active: 'bg-red-600 text-white', inactive: 'bg-red-100 text-red-800' },
+                purple: { active: 'bg-purple-600 text-white', inactive: 'bg-purple-100 text-purple-800' },
+                yellow: { active: 'bg-yellow-500 text-white', inactive: 'bg-yellow-100 text-yellow-800' },
+                pink: { active: 'bg-pink-600 text-white', inactive: 'bg-pink-100 text-pink-800' },
+            };
+            Object.values(buses).forEach(bus => {
+                const tabButton = document.createElement('button');
+                const busColors = colorClasses[bus.color] || colorClasses.indigo;
+                const styles = bus.id === currentBusId ? busColors.active : busColors.inactive;
+                tabButton.className = `flex items-center gap-2 px-4 py-2 rounded-lg text-base font-medium transition ${styles} hover:opacity-80`;
+                tabButton.innerHTML = `<span>${bus.name}</span>`;
+                tabButton.addEventListener('click', () => switchToBus(bus.id));
+                if (Object.keys(buses).length > 1) {
+                    const deleteBtn = document.createElement('span');
+                    deleteBtn.className = 'w-5 h-5 flex items-center justify-center rounded-full bg-black bg-opacity-10 hover:bg-opacity-20';
+                    deleteBtn.innerHTML = '&times;';
+                    deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteBus(bus.id); });
+                    tabButton.appendChild(deleteBtn);
+                }
+                container.appendChild(tabButton);
+            });
+        }
+        function switchToBus(busId) {
+            if (busId === currentBusId) return;
+            currentBusId = busId;
+            pushStateToHistory();
+            renderAll();
+        }
+        function deleteBus(busId) {
+            if (Object.keys(buses).length <= 1) { alert('ไม่สามารถลบรถบัสสุดท้ายได้'); return; }
+            if (confirm(`ต้องการลบ ${buses[busId].name} หรือไม่?`)) {
+                delete buses[busId];
+                delete allBusData[busId];
+                currentBusId = Object.keys(buses)[0];
+                pushStateToHistory();
+                renderAll();
+            }
+        }
+        
+        function showMessage(message, type = 'info') {
+            const messageDiv = document.createElement('div');
+            let bgColor = 'bg-blue-500';
+            if(type === 'success') bgColor = 'bg-green-500';
+            if(type === 'error') bgColor = 'bg-red-500';
+            messageDiv.className = `fixed top-4 right-4 px-4 py-3 rounded-lg text-white shadow-lg z-50 ${bgColor}`;
+            messageDiv.textContent = message;
+            document.body.appendChild(messageDiv);
+            setTimeout(() => { messageDiv.remove(); }, 3000);
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeApp);
+
+    </script>
+</body>
+</html>
