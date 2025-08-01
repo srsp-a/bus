@@ -371,6 +371,10 @@
             document.getElementById('textBoxModal').addEventListener('click', (e) => { if (e.target.id === 'textBoxModal') closeTextBoxModal(); });
             document.getElementById('busModal').addEventListener('click', (e) => { if (e.target.id === 'busModal') closeBusModal(); });
             document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllModals(); });
+            
+            // Add event listeners for live editing in the modal
+            document.getElementById('passengerName').addEventListener('input', handleSeatInfoChange);
+            document.getElementById('otherInfo').addEventListener('input', handleSeatInfoChange);
         }
 
         function getCurrentBusData() {
@@ -510,6 +514,7 @@
         }
 
         let currentEditingSeat = null;
+        let initialSeatState = null;
 
         function toggleEditMode() {
             isEditMode = !isEditMode;
@@ -715,31 +720,46 @@
         function openEditModal(seatId) {
             currentEditingSeat = seatId;
             const seat = getCurrentBusData().seats[seatId];
+            initialSeatState = JSON.parse(JSON.stringify(seat)); // Store initial state
             document.getElementById('seatIdText').textContent = seatId;
             document.getElementById('passengerName').value = seat.passenger || '';
             document.getElementById('otherInfo').value = seat.otherInfo || '';
             openModal('editModal');
             setTimeout(() => document.getElementById('passengerName').focus(), 100);
         }
-        function closeEditModal() { closeModal('editModal'); currentEditingSeat = null; }
-        function saveSeatData() {
+
+        function handleSeatInfoChange() {
             if (!currentEditingSeat) return;
             const data = getCurrentBusData();
-            data.seats[currentEditingSeat].passenger = document.getElementById('passengerName').value.trim();
-            data.seats[currentEditingSeat].otherInfo = document.getElementById('otherInfo').value.trim();
-            pushStateToHistory();
-            renderBusLayout();
+            const seat = data.seats[currentEditingSeat];
+            seat.passenger = document.getElementById('passengerName').value;
+            seat.otherInfo = document.getElementById('otherInfo').value;
+            renderBusLayout(); // Re-render for live preview
+        }
+
+        function closeEditModal() {
+            if (currentEditingSeat) {
+                const currentSeatState = getCurrentBusData().seats[currentEditingSeat];
+                if (JSON.stringify(initialSeatState) !== JSON.stringify(currentSeatState)) {
+                    pushStateToHistory();
+                }
+            }
+            closeModal('editModal');
+            currentEditingSeat = null;
+            initialSeatState = null;
+        }
+
+        function saveSeatData() {
             closeEditModal();
         }
+
         function clearSeatData() {
             if (!currentEditingSeat) return;
-            const data = getCurrentBusData();
-            data.seats[currentEditingSeat].passenger = '';
-            data.seats[currentEditingSeat].otherInfo = '';
-            pushStateToHistory();
-            renderBusLayout();
-            closeEditModal();
+            document.getElementById('passengerName').value = '';
+            document.getElementById('otherInfo').value = '';
+            handleSeatInfoChange();
         }
+
         function deleteSeatFromModal() {
             if (!currentEditingSeat) return;
             const data = getCurrentBusData();
